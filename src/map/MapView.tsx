@@ -7,17 +7,14 @@ maplibregl.setWorkerUrl(workerUrl);
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { circleRing, type LatLng } from '../geo';
 import type { Offer } from '../offers';
-import { GiftLayer } from './giftLayer';
+import { LogoLayer } from './logoLayer';
 
 type Props = {
   pos: LatLng;
-  catchRadius: number;
   viewRadius: number;
   heading: number | null;
   followCompass: boolean;
   offers: Offer[];
-  caught: Set<string>;
-  inRange: Set<string>;
   onTapOffer: (o: Offer) => void;
   onZoomStep: (dir: 1 | -1) => void;
 };
@@ -90,6 +87,34 @@ function bkashify(style: StyleSpecification): StyleSpecification {
   return { ...style, layers };
 }
 
+/**
+ * Warm the browser's HTTP cache with the zoom-14 tiles around `c`.
+ * The minimap renders z13 tiles; full screen switches to z14 (much heavier in dense
+ * areas + 3D buildings), so without this the full map waits on a fresh download.
+ * Tiles are immutable (`max-age` 10 years), so the map worker's later fetch hits the cache.
+ */
+const warmed = new Set<string>();
+async function prefetchTiles(style: StyleSpecification, c: LatLng) {
+  const src = Object.values(style.sources).find((s) => s.type === 'vector') as { url?: string } | undefined;
+  if (!src?.url) return;
+  try {
+    const tpl: string | undefined = (await fetch(src.url).then((r) => r.json())).tiles?.[0];
+    if (!tpl) return;
+    const z = 14, n = 2 ** z;
+    const cx = Math.floor(((c.lng + 180) / 360) * n);
+    const r = (c.lat * Math.PI) / 180;
+    const cy = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n);
+    // centre first, then the 8 neighbours (a z14 tile is ~2 km wide here)
+    const order = [[0, 0], [0, -1], [-1, 0], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+    for (const [dx, dy] of order) {
+      const url = tpl.replace('{z}', String(z)).replace('{x}', String(cx + dx)).replace('{y}', String(cy + dy));
+      if (warmed.has(url)) continue;
+      warmed.add(url);
+      await fetch(url, { priority: 'low' } as RequestInit).then((res) => res.arrayBuffer()).catch(() => warmed.delete(url));
+    }
+  } catch { /* offline: the map just loads on demand */ }
+}
+
 /** Zoom so that `radius` metres fits in the shorter half-screen. */
 function zoomFor(radius: number, lat: number, el: HTMLElement) {
   const half = Math.min(el.clientWidth, el.clientHeight) * 0.46;
@@ -105,7 +130,7 @@ const circle = (c: LatLng, r: number) => ({
 export default function MapView(p: Props) {
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const layerRef = useRef<GiftLayer | null>(null);
+  const layerRef = useRef<LogoLayer | null>(null);
   const avatarRef = useRef<maplibregl.Marker | null>(null);
   const arrowRef = useRef<HTMLDivElement | null>(null);
   const props = useRef(p);
@@ -146,15 +171,18 @@ export default function MapView(p: Props) {
 
       map.on('load', () => {
         map.addSource('view', { type: 'geojson', data: circle(start, props.current.viewRadius) });
-        map.addSource('catch', { type: 'geojson', data: circle(start, props.current.catchRadius) });
         map.addLayer({ id: 'view-line', type: 'line', source: 'view', paint: { 'line-color': '#e2136e', 'line-width': 2, 'line-opacity': 0.55, 'line-dasharray': [2, 2] } });
-        map.addLayer({ id: 'catch-fill', type: 'fill', source: 'catch', paint: { 'fill-color': '#e2136e', 'fill-opacity': 0.12 } });
-        map.addLayer({ id: 'catch-line', type: 'line', source: 'catch', paint: { 'line-color': '#e2136e', 'line-width': 2.5, 'line-opacity': 0.8 } });
-        const layer = new GiftLayer(start);
+        const layer = new LogoLayer(start);
         layerRef.current = layer;
         map.addLayer(layer);
         ready.current = true;
-        layer.setOffers(props.current.offers, props.current.caught, props.current.inRange);
+        layer.setOffers(props.current.offers);
+        // once the minimap has its own tiles, quietly fetch what the full map will need
+        map.once('idle', () => {
+          const go = () => prefetchTiles(style, shown.current);
+          if ('requestIdleCallback' in window) requestIdleCallback(go, { timeout: 3000 });
+          else setTimeout(go, 1000);
+        });
       });
 
       // ---- follow loop: smooth position, zoom, bearing ----
@@ -183,7 +211,6 @@ export default function MapView(p: Props) {
         }
         if (ready.current && frame++ % 4 === 0) {
           (map.getSource('view') as maplibregl.GeoJSONSource)?.setData(circle(s, cur.viewRadius));
-          (map.getSource('catch') as maplibregl.GeoJSONSource)?.setData(circle(s, cur.catchRadius));
         }
       };
       tick();
@@ -206,12 +233,12 @@ export default function MapView(p: Props) {
     return () => ro.disconnect();
   }, []);
 
-  // sync gifts
+  // sync logo signs
   useEffect(() => {
-    if (ready.current) layerRef.current?.setOffers(p.offers, p.caught, p.inRange);
-  }, [p.offers, p.caught, p.inRange]);
+    if (ready.current) layerRef.current?.setOffers(p.offers);
+  }, [p.offers]);
 
-  // gestures: tap = pick gift, horizontal drag = rotate (when not following compass), pinch / wheel = zoom level
+  // gestures: tap = pick logo, horizontal drag = rotate (when not following compass), pinch / wheel = zoom level
   useEffect(() => {
     const node = el.current;
     if (!node) return;

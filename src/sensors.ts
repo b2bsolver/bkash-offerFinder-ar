@@ -14,7 +14,7 @@ const params = new URLSearchParams(location.search);
  * - Real GPS via watchPosition (smoothed in the map view).
  * - `?lat=..&lng=..` forces a fixed start position (manual mode).
  * - `?walk=1` simulates walking in a slow loop (desk testing).
- * - Manual mode (no GPS / denied / forced): move with arrow keys / WASD or the on-screen pad.
+ * - Manual mode (no GPS / denied / forced): move with arrow keys / WASD.
  */
 export function useGeolocation(enabled: boolean) {
   const forced = params.has('lat') && params.has('lng');

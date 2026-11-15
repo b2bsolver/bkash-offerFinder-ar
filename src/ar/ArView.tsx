@@ -1,17 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LatLng } from '../geo';
 import type { Offer, WithDistance } from '../offers';
-import { acquireCamera, releaseCamera } from '../catch/camera';
+import { acquireCamera, releaseCamera } from './camera';
 import { ArScene, type LookMode } from './arScene';
 
 type Props = {
   pos: LatLng;
   offers: WithDistance[];
-  caught: Set<string>;
-  inRange: Set<string>;
   /** Camera stream held (false while the map is full screen → saves battery). */
   cameraOn: boolean;
-  /** Render loop running (false while covered by the map / catch / panels). */
+  /** Render loop running (false while covered by the map / panels). */
   running: boolean;
   onTap: (o: Offer) => void;
   onLook: (heading: number) => void;
@@ -61,7 +59,7 @@ export default function ArView(p: Props) {
     });
     sceneRef.current = s;
     s.setPos(cb.current.pos);
-    s.setOffers(cb.current.offers, cb.current.caught, cb.current.inRange);
+    s.setOffers(cb.current.offers);
     return () => {
       s.dispose();
       sceneRef.current = null;
@@ -69,7 +67,7 @@ export default function ArView(p: Props) {
   }, []);
 
   useEffect(() => { sceneRef.current?.setPos(p.pos); }, [p.pos]);
-  useEffect(() => { sceneRef.current?.setOffers(p.offers, p.caught, p.inRange); }, [p.offers, p.caught, p.inRange]);
+  useEffect(() => { sceneRef.current?.setOffers(p.offers); }, [p.offers]);
   useEffect(() => { sceneRef.current?.setRunning(p.running); }, [p.running]);
 
   const retry = () => {

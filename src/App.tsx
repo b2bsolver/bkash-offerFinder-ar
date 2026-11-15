@@ -1,22 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapView from './map/MapView';
 import MiniMap from './map/MiniMap';
-import CatchScreen from './catch/CatchScreen';
 import ArView from './ar/ArView';
 import type { LookMode } from './ar/arScene';
-import { acquireCamera, releaseCamera } from './catch/camera';
+import { acquireCamera, releaseCamera } from './ar/camera';
 import { bearingDeg, bn, compassName, distanceM, fmtDistance } from './geo';
-import { CATEGORIES, loadCaught, nearby, offersFor, saveCaught, type Caught, type Category, type Offer } from './offers';
+import { CATEGORIES, nearby, offersFor, type Category, type Offer } from './offers';
+import { Countdown, EndsChip } from './Countdown';
 import { requestMotionPermission, useGeolocation, useHeading } from './sensors';
 
 const ZOOMS = [500, 1000, 2000];
 const ZOOM_BN = ['৫০০ মি', '১ কিমি', '২ কিমি'];
-const BASE_CATCH_M = 40;
 /** AR shows every offer within this distance at its real direction. */
 const AR_RANGE_M = 500;
 const NOCAM = new URLSearchParams(location.search).has('nocam');
 
-type Panel = null | 'list' | 'collection';
+type Panel = null | 'list';
 
 export default function App() {
   const [started, setStarted] = useState(false);
@@ -26,17 +25,13 @@ export default function App() {
   const [cat, setCat] = useState<Category | 'all'>('all');
   const [followCompass, setFollowCompass] = useState(true);
   const [offers, setOffers] = useState<Offer[]>([]);
-  const [caught, setCaught] = useState<Caught[]>(loadCaught);
   const [selected, setSelected] = useState<Offer | null>(null);
-  const [catching, setCatching] = useState<Offer | null>(null);
-  const [revealed, setRevealed] = useState<Offer | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [mapFull, setMapFull] = useState(false);
   const [look, setLook] = useState<number | null>(null);
   const [lookMode, setLookMode] = useState<LookMode>('drag');
 
   const viewRadius = ZOOMS[zoomIdx];
-  const catchRadius = Math.min(80, Math.max(BASE_CATCH_M, geo.accuracy));
   const located = geo.source !== 'waiting';
 
   // mock world is created around the first known position
@@ -44,22 +39,15 @@ export default function App() {
     if (located && offers.length === 0) setOffers(offersFor(geo.pos));
   }, [located, geo.pos, offers.length]);
 
-  const caughtIds = useMemo(() => new Set(caught.map((c) => c.id)), [caught]);
   const inView = useMemo(() => nearby(offers, geo.pos, viewRadius, cat), [offers, geo.pos, viewRadius, cat]);
   const onMap = useMemo(() => nearby(offers, geo.pos, viewRadius * 1.25, cat), [offers, geo.pos, viewRadius, cat]);
   const arList = useMemo(() => nearby(offers, geo.pos, AR_RANGE_M, cat), [offers, geo.pos, cat]);
-  const inRangeIds = useMemo(
-    () => new Set(arList.filter((o) => o.distance <= catchRadius && !caughtIds.has(o.id)).map((o) => o.id)),
-    [arList, catchRadius, caughtIds],
-  );
   // stable references for the map layer
   const mapKey = onMap.map((o) => o.id).join();
   const mapOffers = useMemo(() => {
     const ids = new Set(mapKey.split(','));
     return offers.filter((o) => ids.has(o.id));
   }, [offers, mapKey]);
-  const inRangeKey = [...inRangeIds].join();
-  const stableInRange = useMemo(() => inRangeIds, [inRangeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const zoomStep = (dir: 1 | -1) => setZoomIdx((i) => Math.max(0, Math.min(ZOOMS.length - 1, i - dir)));
   const expandMap = useCallback(() => setMapFull(true), []);
@@ -77,24 +65,8 @@ export default function App() {
     setStarted(true);
   };
 
-  const tapOffer = (o: Offer) => {
-    if (inRangeIds.has(o.id)) {
-      setSelected(null);
-      setCatching(o);
-    } else setSelected(o);
-  };
-
-  const onOpened = () => {
-    if (!catching) return;
-    const o = catching;
-    if (!caughtIds.has(o.id)) {
-      const next = [{ id: o.id, at: Date.now(), offer: o }, ...caught];
-      setCaught(next);
-      saveCaught(next);
-    }
-    setCatching(null);
-    setRevealed(o);
-  };
+  // tap a logo (AR, map or list) → open that offer
+  const tapOffer = useCallback((o: Offer) => setSelected(o), []);
 
   // AR look direction drives the minimap when there is no compass (desktop drag-to-look)
   const lastLook = useRef(0);
@@ -107,18 +79,15 @@ export default function App() {
 
   if (!started) return <StartScreen onStart={start} />;
 
-  const firstInRange = arList.find((o) => inRangeIds.has(o.id));
   const mapHeading = heading ?? look;
   // battery: camera released while the map is full screen; AR render paused whenever covered
-  const arRunning = !mapFull && !catching && !panel;
+  const arRunning = !mapFull && !panel && !selected;
 
   return (
     <div className={mapFull ? 'app map-full' : 'app'}>
       <ArView
         pos={geo.pos}
         offers={arList}
-        caught={caughtIds}
-        inRange={stableInRange}
         cameraOn={!mapFull}
         running={arRunning}
         onTap={tapOffer}
@@ -166,13 +135,10 @@ export default function App() {
         >
           <MapView
             pos={geo.pos}
-            catchRadius={catchRadius}
             viewRadius={mapFull ? viewRadius : AR_RANGE_M}
             heading={mapHeading}
             followCompass={followCompass}
             offers={mapOffers}
-            caught={caughtIds}
-            inRange={stableInRange}
             onTapOffer={tapOffer}
             onZoomStep={zoomStep}
           />
@@ -197,13 +163,6 @@ export default function App() {
         ))}
       </nav>
 
-      {geo.source === 'manual' && <DPad move={geo.move} />}
-
-      {firstInRange && !selected && !catching && (
-        <button className="toast" onClick={() => setCatching(firstInRange)}>
-          🎁 <b>{firstInRange.brand.name}</b> · <span>ধরুন! Tap to catch</span>
-        </button>
-      )}
 
       <div className="status">
         {geo.error && <span>{geo.error} · move with arrow keys / pad</span>}
@@ -221,30 +180,16 @@ export default function App() {
       )}
 
       <footer className="hud-bottom">
-        <button className="pill" onClick={() => setPanel('list')}>☰ List</button>
-        <button className="pill main" onClick={() => setPanel('collection')}>
-          🎁 My offers <span className="count">{bn(caught.length)}</span>
+        <button className="pill main" onClick={() => setPanel('list')}>
+          ☰ Offers nearby <span className="count">{bn(inView.length)}</span>
         </button>
       </footer>
 
       {/* ---------- sheets ---------- */}
-      {selected && (
-        <OfferSheet
-          offer={selected}
-          from={geo.pos}
-          catchRadius={catchRadius}
-          caught={caughtIds.has(selected.id)}
-          onCatch={() => { setCatching(selected); setSelected(null); }}
-          onClose={() => setSelected(null)}
-        />
-      )}
       {panel === 'list' && (
-        <ListPanel items={inView} caught={caughtIds} radius={viewRadius} onPick={(o) => { setPanel(null); tapOffer(o); }} onClose={() => setPanel(null)} />
+        <ListPanel items={inView} radius={viewRadius} onPick={(o) => { setPanel(null); tapOffer(o); }} onClose={() => setPanel(null)} />
       )}
-      {panel === 'collection' && <CollectionPanel items={caught} onPick={(o) => { setPanel(null); setRevealed(o); }} onClose={() => setPanel(null)} />}
-
-      {catching && <CatchScreen offer={catching} onOpened={onOpened} onClose={() => setCatching(null)} />}
-      {revealed && <RevealCard offer={revealed} onClose={() => setRevealed(null)} />}
+      {selected && <OfferCard key={selected.id} offer={selected} from={geo.pos} onClose={() => setSelected(null)} />}
     </div>
   );
 }
@@ -255,35 +200,27 @@ function StartScreen({ onStart }: { onStart: () => void }) {
   return (
     <div className="start">
       <img src="/img/logo.webp" alt="bKash" className="start-logo" />
-      <div className="bird big" />
-      <h1>Offer Hunt <span>Nearby</span></h1>
-      <p className="bn">হাঁটুন, খুঁজুন, অফার ধরুন!</p>
+      <h1>Offers <span>Nearby</span></h1>
+      <p className="bn">চারপাশে দেখুন, অফার খুঁজুন!</p>
       <ul className="how">
-        <li>📷 Look around — gifts float at real shops within 500 m</li>
-        <li>🚶 Walk close (within ~40 m)</li>
-        <li>🎁 Tap the gift to catch it and unlock the offer</li>
+        <li>📷 Look around — brand logos float at real shops within 500 m</li>
+        <li>👆 Tap a logo to see that shop's bKash offer</li>
+        <li>🗺️ Open the map for shops up to 2 km away</li>
       </ul>
-      <button className="btn big" onClick={onStart}>Start hunting · শুরু করুন</button>
+      <button className="btn big" onClick={onStart}>Start · শুরু করুন</button>
       <small>Asks for camera, location and motion (compass). Your location stays on your phone.<br />Demo build — offers are sample data.</small>
     </div>
   );
 }
 
-function DPad({ move }: { move: (e: number, n: number) => void }) {
-  const s = 8;
-  return (
-    <div className="dpad" aria-label="Move (demo)">
-      <button onClick={() => move(0, s)}>▲</button>
-      <div>
-        <button onClick={() => move(-s, 0)}>◀</button>
-        <button onClick={() => move(s, 0)}>▶</button>
-      </div>
-      <button onClick={() => move(0, -s)}>▼</button>
-    </div>
-  );
-}
-
 function Badge({ o, size = 44 }: { o: Offer; size?: number }) {
+  const [broken, setBroken] = useState(false);
+  if (o.brand.logo && !broken)
+    return (
+      <span className="badge logo" style={{ width: size, height: size }}>
+        <img src={o.brand.logo} alt={o.brand.name} onError={() => setBroken(true)} />
+      </span>
+    );
   return (
     <span className="badge" style={{ background: o.brand.color, width: size, height: size, fontSize: size * 0.48 }}>
       {o.brand.initial}
@@ -291,38 +228,54 @@ function Badge({ o, size = 44 }: { o: Offer; size?: number }) {
   );
 }
 
-function OfferSheet(p: { offer: Offer; from: { lat: number; lng: number }; catchRadius: number; caught: boolean; onCatch: () => void; onClose: () => void }) {
-  const d = distanceM(p.from, p.offer);
-  const dir = compassName(bearingDeg(p.from, p.offer));
-  const inRange = d <= p.catchRadius;
+/** Offer details, opened by tapping a brand logo (any distance). */
+function OfferCard({ offer, from, onClose }: { offer: Offer; from: { lat: number; lng: number }; onClose: () => void }) {
+  const d = distanceM(from, offer);
+  const dir = compassName(bearingDeg(from, offer));
+  const directions = `https://www.google.com/maps/dir/?api=1&destination=${offer.lat},${offer.lng}`;
+  const [bannerBroken, setBannerBroken] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  }, [onClose]);
   return (
-    <div className="sheet" onClick={p.onClose}>
-      <div className="sheet-card" onClick={(e) => e.stopPropagation()}>
-        <div className="row">
-          <Badge o={p.offer} />
-          <div className="grow">
-            <b>{p.offer.brand.name}</b>
-            <small>{p.offer.address}</small>
+    <div className="reveal" onClick={onClose}>
+      <div className="reveal-card" role="dialog" aria-label={`${offer.brand.name} offer`} onClick={(e) => e.stopPropagation()}>
+        {offer.banner && !bannerBroken ? (
+          <div className="reveal-banner" style={{ background: offer.brand.color }}>
+            <img src={offer.banner} alt={`${offer.brand.name} campaign`} onError={() => setBannerBroken(true)} />
+            <button className="icon-btn close" onClick={onClose} aria-label="Close">✕</button>
           </div>
-          {p.offer.brand.tag && <span className="tag">{p.offer.brand.tag}</span>}
-        </div>
-        <div className="offer-val">
-          {p.offer.offerEn}
-          <span>{p.offer.offerBn}</span>
-        </div>
-        {p.caught ? (
-          <div className="note ok">✓ Already in My offers</div>
-        ) : inRange ? (
-          <button className="btn big" onClick={p.onCatch}>🎁 Catch it!</button>
         ) : (
-          <div className="note">🚶 Walk <b>{fmtDistance(d - p.catchRadius)}</b> {dir} to catch this gift</div>
+          <div className="reveal-head" style={{ background: offer.brand.color }}>
+            <button className="icon-btn close" onClick={onClose} aria-label="Close">✕</button>
+            <Badge o={offer} size={88} />
+          </div>
         )}
+        <div className="reveal-body">
+          <div className="reveal-title">
+            <b>{offer.brand.name}</b>
+            {offer.brand.tag && <span className="tag">{offer.brand.tag}</span>}
+          </div>
+          <div className="offer-val big">
+            {offer.offerEn}
+            <span>{offer.offerBn}</span>
+          </div>
+          <p>Pay with bKash at this outlet.</p>
+          <Countdown end={offer.endsAt} compact />
+          <small>📍 {offer.address} · {fmtDistance(d)} {dir}</small>
+          <div className="row gap">
+            <a className="btn ghost" href={directions} target="_blank" rel="noreferrer">Directions</a>
+            <button className="btn" onClick={onClose}>Close</button>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function ListPanel(p: { items: (Offer & { distance: number })[]; caught: Set<string>; radius: number; onPick: (o: Offer) => void; onClose: () => void }) {
+function ListPanel(p: { items: (Offer & { distance: number })[]; radius: number; onPick: (o: Offer) => void; onClose: () => void }) {
   return (
     <div className="panel">
       <div className="panel-head">
@@ -331,69 +284,18 @@ function ListPanel(p: { items: (Offer & { distance: number })[]; caught: Set<str
       </div>
       <ul className="list">
         {p.items.map((o) => (
-          <li key={o.id} onClick={() => p.onPick(o)} className={p.caught.has(o.id) ? 'done' : ''}>
+          <li key={o.id} onClick={() => p.onPick(o)}>
             <Badge o={o} size={40} />
             <div className="grow">
               <b>{o.brand.name}</b>
               <small>{o.offerEn} · {o.offerBn}</small>
             </div>
-            <span className="dist">{p.caught.has(o.id) ? '✓' : fmtDistance(o.distance)}</span>
+            <EndsChip end={o.endsAt} />
+            <span className="dist">{fmtDistance(o.distance)}</span>
           </li>
         ))}
         {p.items.length === 0 && <li className="none">No offers here — try zooming out.</li>}
       </ul>
-    </div>
-  );
-}
-
-function CollectionPanel(p: { items: Caught[]; onPick: (o: Offer) => void; onClose: () => void }) {
-  return (
-    <div className="panel">
-      <div className="panel-head">
-        <b>My offers · {bn(p.items.length)}</b>
-        <button className="icon-btn" onClick={p.onClose}>✕</button>
-      </div>
-      {p.items.length === 0 ? (
-        <p className="none">No offers caught yet. Walk to a gift and tap it!</p>
-      ) : (
-        <div className="grid">
-          {p.items.map((c) => (
-            <button key={c.id} className="grid-item" onClick={() => p.onPick(c.offer)}>
-              <Badge o={c.offer} size={52} />
-              <b>{c.offer.brand.name}</b>
-              <small>{c.offer.offerBn}</small>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RevealCard({ offer, onClose }: { offer: Offer; onClose: () => void }) {
-  const dir = `https://www.google.com/maps/dir/?api=1&destination=${offer.lat},${offer.lng}`;
-  return (
-    <div className="reveal">
-      <div className="reveal-card">
-        <div className="reveal-head" style={{ background: offer.brand.color }}>
-          <div className="bird" />
-          <Badge o={offer} size={64} />
-          <b>{offer.brand.name}</b>
-        </div>
-        <div className="reveal-body">
-          <span className="congrats">🎉 অভিনন্দন! You unlocked</span>
-          <div className="offer-val big">
-            {offer.offerEn}
-            <span>{offer.offerBn}</span>
-          </div>
-          <p>Pay with bKash at this outlet. Valid till {offer.endsAt}.</p>
-          <small>📍 {offer.address}</small>
-          <div className="row gap">
-            <a className="btn ghost" href={dir} target="_blank" rel="noreferrer">Directions</a>
-            <button className="btn" onClick={onClose}>Keep hunting</button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

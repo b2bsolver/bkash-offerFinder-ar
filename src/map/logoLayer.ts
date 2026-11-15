@@ -1,21 +1,21 @@
 import * as THREE from 'three';
 import * as maplibregl from 'maplibre-gl';
 import type { CustomLayerInterface, CustomRenderMethodInput, Map as MLMap } from 'maplibre-gl';
-import { makeGift, type Gift } from '../gift3d';
+import { LOGO_UNITS, makeLogoSign, type LogoSign } from '../logo3d';
 import type { Offer } from '../offers';
 
-type Item = { offer: Offer; gift: Gift; phase: number; inRange: boolean; caught: boolean; x: number; z: number };
+type Item = { offer: Offer; sign: LogoSign; phase: number };
 
-/** On-screen gift height in CSS pixels (kept constant across zoom levels, like map games). */
-const GIFT_PX = 54;
-const GIFT_UNITS = 1.95;
+/** On-screen sign height in CSS pixels (kept constant across zoom levels). */
+const SIGN_PX = 58;
 
 /**
- * three.js gifts drawn inside the MapLibre WebGL context.
+ * three.js brand logo signs drawn inside the MapLibre WebGL context.
+ * The plates turn with the map bearing so the logo always faces the screen.
  * Local space: metres from `origin`, +x east, +y up, +z south.
  */
-export class GiftLayer implements CustomLayerInterface {
-  id = 'gifts-3d';
+export class LogoLayer implements CustomLayerInterface {
+  id = 'logos-3d';
   type = 'custom' as const;
   renderingMode = '3d' as const;
 
@@ -47,7 +47,7 @@ export class GiftLayer implements CustomLayerInterface {
   }
 
   onRemove() {
-    this.items.forEach((it) => this.scene.remove(it.gift.group));
+    this.items.forEach((it) => this.scene.remove(it.sign.group));
     this.items.clear();
   }
 
@@ -56,47 +56,38 @@ export class GiftLayer implements CustomLayerInterface {
     return { x: (m.x - this.origin.x) / this.mScale, z: (m.y - this.origin.y) / this.mScale };
   }
 
-  /** Sync the set of gifts shown on the map. */
-  setOffers(offers: Offer[], caught: Set<string>, inRange: Set<string>) {
+  /** Sync the set of logo signs shown on the map. */
+  setOffers(offers: Offer[]) {
     const keep = new Set(offers.map((o) => o.id));
     for (const [id, it] of this.items) {
       if (!keep.has(id)) {
-        this.scene.remove(it.gift.group);
+        this.scene.remove(it.sign.group);
         this.items.delete(id);
       }
     }
     for (const o of offers) {
-      let it = this.items.get(o.id);
-      if (!it) {
-        const gift = makeGift(o.brand.initial, o.brand.color);
-        const { x, z } = this.toLocal(o.lat, o.lng);
-        gift.group.position.set(x, 0, z);
-        this.scene.add(gift.group);
-        it = { offer: o, gift, phase: Math.random() * Math.PI * 2, inRange: false, caught: false, x, z };
-        this.items.set(o.id, it);
-      }
-      const c = caught.has(o.id);
-      if (c !== it.caught) {
-        it.caught = c;
-        it.gift.setOpened(c);
-      }
-      it.inRange = inRange.has(o.id) && !c;
+      if (this.items.has(o.id)) continue;
+      const sign = makeLogoSign(o.brand);
+      const { x, z } = this.toLocal(o.lat, o.lng);
+      sign.group.position.set(x, 0, z);
+      this.scene.add(sign.group);
+      this.items.set(o.id, { offer: o, sign, phase: Math.random() * Math.PI * 2 });
     }
     this.map?.triggerRepaint();
   }
 
-  /** Smaller gifts in a small container (minimap card). */
+  /** Smaller signs in a small container (minimap card). */
   private sizeK() {
     return Math.min(1, Math.max(0.28, this.map.getContainer().clientWidth / 520));
   }
 
-  /** Nearest gift to a screen point (CSS px), using projected positions. */
+  /** Nearest sign to a screen point (CSS px), using projected positions. */
   pick(point: { x: number; y: number }, maxPx = 46): Offer | null {
     let best: Offer | null = null;
     let bestD = maxPx;
     for (const it of this.items.values()) {
       const p = this.map.project([it.offer.lng, it.offer.lat]);
-      const cy = p.y - GIFT_PX * this.sizeK() * 0.55; // gift body sits above its ground point
+      const cy = p.y - SIGN_PX * this.sizeK() * 0.6; // logo plate sits above its ground point
       const d = Math.hypot(point.x - p.x, point.y - cy);
       if (d < bestD) {
         bestD = d;
@@ -111,18 +102,14 @@ export class GiftLayer implements CustomLayerInterface {
     const zoom = this.map.getZoom();
     const lat = this.map.getCenter().lat;
     const mpp = (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom);
-    const base = (GIFT_PX * this.sizeK() * mpp) / GIFT_UNITS;
+    const base = (SIGN_PX * this.sizeK() * mpp) / LOGO_UNITS;
     const yaw = (-this.map.getBearing() * Math.PI) / 180;
 
     for (const it of this.items.values()) {
-      const g = it.gift;
-      const pulse = it.inRange ? 1.22 + Math.sin(t * 5 + it.phase) * 0.06 : 1;
-      g.group.scale.setScalar(base * (it.caught ? 0.8 : pulse));
-      g.body.position.y = it.caught ? 0 : 0.12 + Math.abs(Math.sin(t * 2.2 + it.phase)) * (it.inRange ? 0.45 : 0.18);
-      g.body.rotation.y = yaw + (it.inRange ? Math.sin(t * 6 + it.phase) * 0.12 : 0);
-      const gm = g.glow.material as THREE.MeshBasicMaterial;
-      gm.opacity = it.inRange ? 0.55 + Math.sin(t * 5 + it.phase) * 0.25 : 0;
-      g.glow.scale.setScalar(it.inRange ? 1.2 + ((t * 0.8 + it.phase) % 1) * 0.6 : 1);
+      const g = it.sign;
+      g.group.scale.setScalar(base);
+      g.body.position.y = 0.08 + Math.sin(t * 1.6 + it.phase) * 0.06;
+      g.body.rotation.y = yaw;
     }
 
     const m = new THREE.Matrix4().fromArray(opts.defaultProjectionData.mainMatrix as unknown as number[]);

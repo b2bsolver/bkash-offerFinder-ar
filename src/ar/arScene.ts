@@ -1,19 +1,20 @@
 import * as THREE from 'three';
-import { makeGift, type Gift } from '../gift3d';
+import { makeLogoSign, LOGO_UNITS, type LogoSign } from '../logo3d';
 import { bn, type LatLng } from '../geo';
 import type { WithDistance, Offer } from '../offers';
+
+/** Labels of shops beyond 250 m are drawn a bit smaller. */
+const FAR_SCALE = 0.85;
 
 /** How the AR camera is oriented. */
 export type LookMode = 'compass' | 'relative' | 'drag';
 
 type Item = {
   offer: WithDistance;
-  gift: Gift;
+  sign: LogoSign;
   label: HTMLButtonElement;
   txt: HTMLElement;
   phase: number;
-  inRange: boolean;
-  caught: boolean;
   lastText: string;
   lw: number;
   lh: number;
@@ -38,13 +39,13 @@ const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
  *
  * World frame: camera at the origin (eye height), +X = east, −Z = north, +Y = up.
  * Every offer within range is placed at its real compass bearing from the player.
- * Distances are compressed (500 m → ~42 units) and gifts keep a minimum on-screen
+ * Distances are compressed (500 m → ~42 units) and logo signs keep a minimum on-screen
  * size so far shops stay visible; HTML labels show name + real distance.
  *
  * Orientation:
  * - Android: `deviceorientationabsolute` (alpha is already relative to north).
  * - iOS: relative `deviceorientation` + `webkitCompassHeading` → smoothed north offset.
- * - No sensors (desktop): drag to look; starts facing the nearest gift.
+ * - No sensors (desktop): drag to look; starts facing the nearest shop.
  */
 export class ArScene {
   private renderer: THREE.WebGLRenderer;
@@ -176,7 +177,7 @@ export class ArScene {
   private tap(x: number, y: number) {
     const r = this.renderer.domElement.getBoundingClientRect();
     this.ray.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), this.camera);
-    const bodies = [...this.items.values()].filter((it) => it.gift.group.visible).map((it) => it.gift.body);
+    const bodies = [...this.items.values()].filter((it) => it.sign.group.visible).map((it) => it.sign.body);
     const hit = this.ray.intersectObjects(bodies, true)[0];
     if (!hit) return;
     let o: THREE.Object3D | null = hit.object;
@@ -192,27 +193,34 @@ export class ArScene {
     if (!this.shown) this.shown = { ...p };
   }
 
-  setOffers(list: WithDistance[], caught: Set<string>, inRange: Set<string>) {
+  setOffers(list: WithDistance[]) {
     const keep = new Set(list.map((o) => o.id));
     for (const [id, it] of this.items) {
       if (keep.has(id)) continue;
-      this.scene.remove(it.gift.group);
-      it.gift.group.traverse((m) => (m as THREE.Mesh).geometry?.dispose());
+      this.scene.remove(it.sign.group); // geometry / materials are shared (logo3d.ts)
       it.label.remove();
       this.items.delete(id);
     }
     for (const o of list) {
       let it = this.items.get(o.id);
       if (!it) {
-        const gift = makeGift(o.brand.initial, o.brand.color);
-        gift.body.userData.offerId = o.id;
-        this.scene.add(gift.group);
+        const sign = makeLogoSign(o.brand);
+        sign.body.userData.offerId = o.id;
+        this.scene.add(sign.group);
         const label = document.createElement('button');
         label.className = 'ar-label';
         const dot = document.createElement('span');
         dot.className = 'ar-dot';
-        dot.style.background = o.brand.color;
-        dot.textContent = o.brand.initial;
+        if (o.brand.logo) {
+          dot.classList.add('logo');
+          const img = document.createElement('img');
+          img.src = o.brand.logo;
+          img.alt = '';
+          dot.append(img);
+        } else {
+          dot.style.background = o.brand.color;
+          dot.textContent = o.brand.initial;
+        }
         const txt = document.createElement('span');
         txt.className = 'ar-txt';
         label.append(dot, txt);
@@ -221,16 +229,10 @@ export class ArScene {
           if (cur) this.cb.onTap(cur.offer);
         });
         this.labels.appendChild(label);
-        it = { offer: o, gift, label, txt, phase: Math.random() * Math.PI * 2, inRange: false, caught: false, lastText: '', lw: 0, lh: 0 };
+        it = { offer: o, sign, label, txt, phase: Math.random() * Math.PI * 2, lastText: '', lw: 0, lh: 0 };
         this.items.set(o.id, it);
       }
       it.offer = o;
-      const c = caught.has(o.id);
-      if (c !== it.caught) it.gift.setOpened(c);
-      it.caught = c;
-      it.inRange = inRange.has(o.id) && !c;
-      it.label.classList.toggle('in-range', it.inRange);
-      it.label.classList.toggle('caught', c);
     }
   }
 
@@ -277,7 +279,7 @@ export class ArScene {
     }
     const me = this.shown;
 
-    // desktop: start facing the nearest gift
+    // desktop: start facing the nearest shop
     if (!this.aimed && !this.ori && me && this.items.size) {
       const near = [...this.items.values()].sort((a, b) => a.offer.distance - b.offer.distance)[0].offer;
       const e = (near.lng - me.lng) * M_PER_DEG * Math.cos((me.lat * Math.PI) / 180);
@@ -299,11 +301,11 @@ export class ArScene {
 
     const w = this.host.clientWidth, h = this.host.clientHeight;
     let nearest: Item | null = null;
-    for (const it of this.items.values()) if (!it.caught && (!nearest || it.offer.distance < nearest.offer.distance)) nearest = it;
+    for (const it of this.items.values()) if (!nearest || it.offer.distance < nearest.offer.distance) nearest = it;
     const placed: Placed[] = [];
 
     for (const it of this.items.values()) {
-      const g = it.gift.group;
+      const g = it.sign.group;
       if (!me) { g.visible = false; it.label.style.display = 'none'; continue; }
       const e = (it.offer.lng - me.lng) * M_PER_DEG * Math.cos((me.lat * Math.PI) / 180);
       const n = (it.offer.lat - me.lat) * M_PER_DEG;
@@ -311,28 +313,27 @@ export class ArScene {
       // compressed display distance + minimum angular size
       const D = d < 8 ? Math.max(d, 3) : 8 + (d - 8) * 0.07;
       const ang = 0.085 / (1 + d / 40) + 0.028;
-      const s = D * ang * (it.inRange ? 1.15 : 1);
+      const s = D * ang * 1.6; // bigger than the old gift so the logo stays readable
       const x = (e / d) * D, z = -(n / d) * D;
-      const bob = Math.abs(Math.sin(t * 2.2 + it.phase)) * s * (it.inRange ? 0.25 : 0.08);
-      const y = -D * (0.2 / (1 + d / 25)) - s * 0.45 + bob;
+      const bob = Math.sin(t * 1.6 + it.phase) * s * 0.05;
+      const y = -D * (0.2 / (1 + d / 25)) - s * 0.45;
       g.visible = true;
       g.position.set(x, y, z);
       g.scale.setScalar(s);
-      g.rotation.y = Math.atan2(-x, -z) + (it.inRange ? Math.sin(t * 6 + it.phase) * 0.12 : 0);
-      const gm = it.gift.glow.material as THREE.MeshBasicMaterial;
-      gm.opacity = it.inRange ? 0.55 + Math.sin(t * 5 + it.phase) * 0.25 : 0;
-      it.gift.glow.scale.setScalar(it.inRange ? 1.2 + ((t * 0.8 + it.phase) % 1) * 0.6 : 1);
+      // logo always faces the viewer, with a gentle float
+      g.rotation.y = Math.atan2(-x, -z);
+      it.sign.body.position.y = bob / s;
 
       // ---- label ----
-      const p = this.tmp.set(x, y + s * 2.05, z).applyMatrix4(this.camera.matrixWorldInverse);
+      const p = this.tmp.set(x, y + bob + s * (LOGO_UNITS + 0.2), z).applyMatrix4(this.camera.matrixWorldInverse);
       const inFront = p.z < -0.1;
       p.applyMatrix4(this.camera.projectionMatrix);
       let sx = ((p.x + 1) / 2) * w, sy = ((1 - p.y) / 2) * h;
       const onScreen = inFront && sx > -40 && sx < w + 40 && sy > -40 && sy < h + 40;
-      const edge = !onScreen && (it.inRange || it === nearest);
+      const edge = !onScreen && it === nearest;
       const text = edge
         ? `${bn(Math.round(d))} মি`
-        : `<b>${esc(it.offer.brand.name)}</b><small>${it.caught ? '✓ ' : ''}${bn(Math.round(d))} মি${it.inRange ? ' · ধরুন!' : ''}</small>`;
+        : `<b>${esc(it.offer.brand.name)}</b><small>${esc(it.offer.offerBn)} · ${bn(Math.round(d))} মি</small>`;
       if (text !== it.lastText) {
         it.txt.innerHTML = text;
         it.lastText = text;
@@ -347,9 +348,9 @@ export class ArScene {
         side = cam.x >= 0 ? 'right' : 'left';
         sx = side === 'right' ? w - 8 : 8;
         sy = THREE.MathUtils.clamp(inFront ? sy : h * 0.5, 180, h - 210);
-        it.label.className = `ar-label edge ${side}${it.inRange ? ' in-range' : ''}`;
+        it.label.className = `ar-label edge ${side}`;
       } else {
-        it.label.className = `ar-label${it.inRange ? ' in-range' : ''}${it.caught ? ' caught' : ''}${d > 250 ? ' far' : ''}`;
+        it.label.className = `ar-label${d > 250 ? ' far' : ''}`;
       }
       if (!it.lw) { it.lw = it.label.offsetWidth; it.lh = it.label.offsetHeight; }
       placed.push({ it, d, sx, sy, edge: side });
@@ -359,7 +360,8 @@ export class ArScene {
     placed.sort((a, b) => a.d - b.d);
     const rects: { l: number; t: number; r: number; b: number }[] = [];
     const rectOf = (p: Placed, sy: number) => {
-      const lw = p.it.lw * (p.d > 250 && !p.edge ? 0.85 : 1), lh = p.it.lh;
+      const k = p.d > 250 && !p.edge ? FAR_SCALE : 1;
+      const lw = p.it.lw * k, lh = p.it.lh * k;
       if (p.edge === 'right') return { l: p.sx - lw, t: sy - lh / 2, r: p.sx, b: sy + lh / 2 };
       if (p.edge === 'left') return { l: p.sx, t: sy - lh / 2, r: p.sx + lw, b: sy + lh / 2 };
       return { l: p.sx - lw / 2, t: sy - lh, r: p.sx + lw / 2, b: sy };
@@ -374,7 +376,9 @@ export class ArScene {
         sy -= rc.b - hit.t + 4;
       }
       rects.push(rectOf(p, sy));
-      p.it.label.style.transform = `translate(${p.sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
+      // scale lives in the transform (after the translate) so it shrinks the pill around its anchor, not its screen position
+      const far = p.d > 250 && !p.edge ? ` scale(${FAR_SCALE})` : '';
+      p.it.label.style.transform = `translate(${p.sx.toFixed(1)}px, ${sy.toFixed(1)}px)${far}`;
       p.it.label.style.zIndex = String(p.edge ? 2000 : 1000 - Math.round(p.d));
     }
 
