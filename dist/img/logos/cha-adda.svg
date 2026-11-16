@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
-<rect width="400" height="400" rx="48" fill="#fff"/>
-<path d="M130 90h120v70a50 50 0 0 1-50 50h-20a50 50 0 0 1-50-50z" fill="#92400E"/><path d="M250 110h20a25 25 0 0 1 0 50h-20" fill="none" stroke="#92400E" stroke-width="16"/>
-<text x="200" y="296" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="64" fill="#92400E">Cha</text>
-<text x="200" y="350" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="30" letter-spacing="8" fill="#3a1027">ADDA</text>
-</svg>

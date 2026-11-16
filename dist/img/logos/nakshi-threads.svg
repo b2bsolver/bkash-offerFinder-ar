@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
-<rect width="400" height="400" rx="48" fill="#fff"/>
-<path d="M200 50l80 90-80 90-80-90z" fill="#7C3AED"/><path d="M200 90l44 50-44 50-44-50z" fill="#fff"/><path d="M200 115l22 25-22 25-22-25z" fill="#7C3AED"/>
-<text x="200" y="296" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="64" fill="#7C3AED">Nakshi</text>
-<text x="200" y="350" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="30" letter-spacing="8" fill="#3a1027">THREADS</text>
-</svg>

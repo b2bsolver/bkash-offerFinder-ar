@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
-<rect width="400" height="400" rx="48" fill="#fff"/>
-<circle cx="200" cy="140" r="50" fill="#EA580C"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(0 200 140)"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(45 200 140)"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(90 200 140)"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(135 200 140)"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(180 200 140)"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(225 200 140)"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(270 200 140)"/><rect x="194" y="40" width="12" height="34" rx="6" fill="#EA580C" transform="rotate(315 200 140)"/>
-<text x="200" y="296" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="64" fill="#EA580C">Shofor</text>
-<text x="200" y="350" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="30" letter-spacing="8" fill="#3a1027">TOURS</text>
-</svg>
